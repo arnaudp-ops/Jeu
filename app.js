@@ -1,6 +1,6 @@
 'use strict';
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+// ─── Phases ──────────────────────────────────────────────────────────────────
 
 const PHASE = {
   SETUP:         'setup',
@@ -14,161 +14,150 @@ const PHASE = {
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
-let setupState = {
-  numPlayers: 4,
-  numRounds:  5,
-  names: [],
-};
+let setup = { numPlayers: 4, numRounds: 5, names: [] };
+let game  = null;
 
-let game = null;
+// ─── Setup ───────────────────────────────────────────────────────────────────
 
-// ─── Setup helpers ───────────────────────────────────────────────────────────
-
-function saveSetupNames() {
-  for (let i = 0; i < setupState.numPlayers; i++) {
-    const el = document.getElementById('pname-' + i);
-    if (el) setupState.names[i] = el.value.trim();
+function saveNames() {
+  for (let i = 0; i < setup.numPlayers; i++) {
+    const el = document.getElementById('pn' + i);
+    if (el) setup.names[i] = el.value.trim();
   }
 }
 
 function onPlayersChange(v) {
-  saveSetupNames();
-  setupState.numPlayers = +v;
-  const val = document.getElementById('playersVal');
+  saveNames();
+  setup.numPlayers = +v;
+  const val = document.getElementById('pVal');
   if (val) val.textContent = v;
-  const container = document.getElementById('playerNames');
-  if (container) {
-    container.innerHTML = buildNameInputs(+v);
+  const list = document.getElementById('pList');
+  if (list) {
+    list.innerHTML = nameInputsHTML(+v);
     for (let i = 0; i < +v; i++) {
-      const el = document.getElementById('pname-' + i);
-      if (el && setupState.names[i]) el.value = setupState.names[i];
+      const el = document.getElementById('pn' + i);
+      if (el && setup.names[i]) el.value = setup.names[i];
     }
   }
 }
 
 function onRoundsChange(v) {
-  setupState.numRounds = +v;
-  const val = document.getElementById('roundsVal');
+  setup.numRounds = +v;
+  const val = document.getElementById('rVal');
   if (val) val.textContent = v;
 }
 
-function buildNameInputs(n) {
+function nameInputsHTML(n) {
   return Array.from({ length: n }, function(_, i) {
-    return '<div class="player-name-input">'
-      + '<div class="player-number">' + (i + 1) + '</div>'
-      + '<input type="text" id="pname-' + i + '" placeholder="Joueur ' + (i + 1) + '" '
+    return '<div class="player-row">'
+      + '<div class="player-avatar">' + (i + 1) + '</div>'
+      + '<input type="text" id="pn' + i + '" placeholder="Joueur ' + (i + 1) + '" '
       + 'maxlength="20" autocomplete="off" autocorrect="off" autocapitalize="words">'
       + '</div>';
   }).join('');
 }
 
 function startGame() {
-  saveSetupNames();
-  const names = [];
-  for (let i = 0; i < setupState.numPlayers; i++) {
-    const n = (setupState.names[i] || '').trim();
-    names.push(n.length > 0 ? n : 'Joueur ' + (i + 1));
+  saveNames();
+  const players = [];
+  for (let i = 0; i < setup.numPlayers; i++) {
+    const n = (setup.names[i] || '').trim();
+    players.push({ name: n || 'Joueur ' + (i + 1), score: 0 });
   }
-
   game = {
-    players:               names.map(function(name) { return { name: name, score: 0 }; }),
-    totalRounds:           setupState.numRounds,
-    currentRound:          1,
-    question:              '',
-    answers:               [],   // [{playerIndex, text}] shuffled after collection
-    votes:                 {},   // votes[answerIdx][playerIdx] = guessedPlayerIdx
-    phase:                 PHASE.QUESTION,
-    currentAnswerPlayerIdx: 0,
-    currentAnswerIdx:      0,
-    currentVoterPos:       0,    // position within eligible voters array
-    usedQuestions:         new Set(),
-    selectedVote:          null,
-    roundDeltas:           [],
+    players,
+    totalRounds:          setup.numRounds,
+    currentRound:         1,
+    question:             '',
+    answers:              [],
+    votes:                {},
+    phase:                PHASE.QUESTION,
+    currentAnswerPlayer:  0,
+    currentAnswerIdx:     0,
+    currentVoterPos:      0,
+    usedQuestions:        new Set(),
+    selectedVote:         null,
+    roundDeltas:          [],
   };
-
   pickQuestion();
   render();
 }
 
-// ─── Game flow ───────────────────────────────────────────────────────────────
+// ─── Question ────────────────────────────────────────────────────────────────
 
 function pickQuestion() {
-  const available = QUESTIONS
-    .map(function(q, i) { return { q: q, i: i }; })
-    .filter(function(item) { return !game.usedQuestions.has(item.i); });
-
-  const pool = available.length > 0 ? available : QUESTIONS.map(function(q, i) { return { q: q, i: i }; });
-  const pick = pool[Math.floor(Math.random() * pool.length)];
+  const pool = QUESTIONS
+    .map(function(q, i) { return { q, i }; })
+    .filter(function(x) { return !game.usedQuestions.has(x.i); });
+  const src  = pool.length ? pool : QUESTIONS.map(function(q, i) { return { q, i }; });
+  const pick = src[Math.floor(Math.random() * src.length)];
   game.usedQuestions.add(pick.i);
   game.question = pick.q;
 }
 
-function startAnswers() {
-  game.phase = PHASE.ANSWER_TURN;
-  game.currentAnswerPlayerIdx = 0;
-  game.answers = [];
+function skipQuestion() {
+  pickQuestion();
   render();
 }
 
-function submitAnswer() {
-  const input = document.getElementById('answerInput');
-  const text  = input ? input.value.trim() : '';
+function startAnswers() {
+  game.phase              = PHASE.ANSWER_TURN;
+  game.currentAnswerPlayer = 0;
+  game.answers            = [];
+  render();
+}
 
+// ─── Answers ─────────────────────────────────────────────────────────────────
+
+function submitAnswer() {
+  const input = document.getElementById('ansInput');
+  const text  = input ? input.value.trim() : '';
   if (!text) {
     if (input) {
       input.classList.add('error');
-      input.placeholder = 'Tu dois entrer une reponse !';
+      input.placeholder = 'Entre une reponse !';
       input.focus();
     }
     return;
   }
-
-  game.answers.push({ playerIndex: game.currentAnswerPlayerIdx, text: text });
-  game.currentAnswerPlayerIdx++;
-
-  if (game.currentAnswerPlayerIdx >= game.players.length) {
-    shuffleArray(game.answers);
-    game.phase            = PHASE.VOTE_COLLECT;
+  game.answers.push({ playerIndex: game.currentAnswerPlayer, text });
+  game.currentAnswerPlayer++;
+  if (game.currentAnswerPlayer >= game.players.length) {
+    shuffle(game.answers);
+    game.phase           = PHASE.VOTE_COLLECT;
     game.currentAnswerIdx = 0;
     game.currentVoterPos  = 0;
     game.votes            = {};
   }
-
   render();
 }
 
-function selectVote(playerIdx) {
-  game.selectedVote = playerIdx;
+// ─── Voting ──────────────────────────────────────────────────────────────────
 
-  document.querySelectorAll('.vote-btn').forEach(function(btn) {
-    btn.classList.remove('selected');
-  });
-  const btn = document.getElementById('vote-btn-' + playerIdx);
-  if (btn) btn.classList.add('selected');
+function eligibleVoters(answerIdx) {
+  const author = game.answers[answerIdx].playerIndex;
+  return game.players.map(function(_, i) { return i; }).filter(function(i) { return i !== author; });
+}
 
-  const confirm = document.getElementById('confirmVoteBtn');
-  if (confirm) {
-    confirm.removeAttribute('disabled');
-  }
+function selectVote(idx) {
+  game.selectedVote = idx;
+  document.querySelectorAll('.vote-btn').forEach(function(b) { b.classList.remove('selected'); });
+  const b = document.getElementById('vb' + idx);
+  if (b) b.classList.add('selected');
+  const btn = document.getElementById('confirmBtn');
+  if (btn) btn.removeAttribute('disabled');
 }
 
 function confirmVote() {
   if (game.selectedVote === null) return;
-
-  const answerIdx = game.currentAnswerIdx;
-  const eligible  = getEligibleVoters(answerIdx);
-  const voterIdx  = eligible[game.currentVoterPos];
-
-  if (!game.votes[answerIdx]) game.votes[answerIdx] = {};
-  game.votes[answerIdx][voterIdx] = game.selectedVote;
-
+  const aIdx    = game.currentAnswerIdx;
+  const voters  = eligibleVoters(aIdx);
+  const voterIdx = voters[game.currentVoterPos];
+  if (!game.votes[aIdx]) game.votes[aIdx] = {};
+  game.votes[aIdx][voterIdx] = game.selectedVote;
   game.selectedVote = null;
   game.currentVoterPos++;
-
-  if (game.currentVoterPos >= eligible.length) {
-    game.phase = PHASE.VOTE_REVEAL;
-  }
-
+  if (game.currentVoterPos >= voters.length) game.phase = PHASE.VOTE_REVEAL;
   render();
 }
 
@@ -181,48 +170,47 @@ function nextAnswer() {
 }
 
 function endVoting() {
-  computeRoundScores();
+  computeScores();
   game.phase = PHASE.ROUND_RESULTS;
   render();
 }
 
-function computeRoundScores() {
+// ─── Scoring ─────────────────────────────────────────────────────────────────
+
+function computeScores() {
   game.roundDeltas = game.players.map(function() { return 0; });
-
-  game.answers.forEach(function(answer, answerIdx) {
-    const authorIdx  = answer.playerIndex;
-    const eligible   = getEligibleVoters(answerIdx);
-    const answerVotes = game.votes[answerIdx] || {};
-
-    eligible.forEach(function(voterIdx) {
-      const guessedIdx = answerVotes[voterIdx];
-      if (guessedIdx === authorIdx) {
+  game.answers.forEach(function(ans, aIdx) {
+    const author  = ans.playerIndex;
+    const voters  = eligibleVoters(aIdx);
+    const aVotes  = game.votes[aIdx] || {};
+    voters.forEach(function(voterIdx) {
+      if (aVotes[voterIdx] === author) {
         game.roundDeltas[voterIdx] += 1;
       } else {
-        game.roundDeltas[authorIdx] += 2;
+        game.roundDeltas[author]   += 2;
       }
     });
   });
-
-  game.roundDeltas.forEach(function(delta, i) {
-    game.players[i].score += delta;
-  });
+  game.roundDeltas.forEach(function(d, i) { game.players[i].score += d; });
 }
+
+// ─── Round / Game flow ───────────────────────────────────────────────────────
 
 function nextRound() {
   game.currentRound++;
-  game.answers               = [];
-  game.votes                 = {};
-  game.currentAnswerPlayerIdx = 0;
-  game.currentAnswerIdx      = 0;
-  game.currentVoterPos       = 0;
-  game.roundDeltas           = [];
+  game.answers             = [];
+  game.votes               = {};
+  game.currentAnswerPlayer  = 0;
+  game.currentAnswerIdx    = 0;
+  game.currentVoterPos     = 0;
+  game.roundDeltas         = [];
+  game.selectedVote        = null;
   pickQuestion();
   game.phase = PHASE.QUESTION;
   render();
 }
 
-function showFinalResults() {
+function showFinal() {
   game.phase = PHASE.FINAL_RESULTS;
   render();
 }
@@ -234,67 +222,55 @@ function resetGame() {
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
-function getEligibleVoters(answerIdx) {
-  const authorIdx = game.answers[answerIdx].playerIndex;
-  return game.players
-    .map(function(_, i) { return i; })
-    .filter(function(i) { return i !== authorIdx; });
-}
-
-function shuffleArray(arr) {
+function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+    [arr[i], arr[j]] = [arr[j], arr[i]];
   }
 }
 
-function esc(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function sortedPlayers() {
+function sorted() {
   return game.players
     .map(function(p, i) { return { name: p.name, score: p.score, idx: i }; })
     .sort(function(a, b) { return b.score - a.score; });
 }
 
-function rankLabel(rank) {
-  if (rank === 0) return '<span style="color:#fbbf24;font-size:1.1rem">1</span>';
-  if (rank === 1) return '<span style="color:#94a3b8;font-size:1.1rem">2</span>';
-  if (rank === 2) return '<span style="color:#cd7c3a;font-size:1.1rem">3</span>';
-  return '<span style="color:var(--text-muted)">' + (rank + 1) + '</span>';
+function rankClass(r) {
+  return r === 0 ? 'r1' : r === 1 ? 'r2' : r === 2 ? 'r3' : '';
 }
 
-function roundBadgeHTML(current, total) {
-  return '<div class="round-badge-row"><span class="round-badge">Manche '
-    + current + ' / ' + total + '</span></div>';
+function rankNum(r) {
+  return r === 0 ? '<span style="color:var(--gold)">' + (r+1) + '</span>'
+       : r === 1 ? '<span style="color:#94a3b8">'   + (r+1) + '</span>'
+       : r === 2 ? '<span style="color:#cd7c3a">'   + (r+1) + '</span>'
+       : '<span style="color:var(--text-muted);font-size:.85rem">' + (r+1) + '</span>';
 }
 
-function progressDotsHTML(current, total) {
-  let html = '<div class="progress-row">';
-  for (let i = 0; i < total; i++) {
-    const cls = i < current ? 'done' : i === current ? 'active' : '';
-    html += '<div class="progress-dot ' + cls + '"></div>';
-  }
-  html += '</div>';
-  return html;
+function roundChip() {
+  return '<div class="round-chip"><div class="round-chip-dot"></div>'
+    + 'Manche ' + game.currentRound + ' / ' + game.totalRounds
+    + '</div>';
 }
 
-// ─── Render dispatcher ───────────────────────────────────────────────────────
+function progressBar(current, total) {
+  const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+  return '<div class="progress-bar-wrap">'
+    + '<div class="progress-bar-fill" style="width:' + pct + '%"></div>'
+    + '</div>';
+}
+
+// ─── Render ───────────────────────────────────────────────────────────────────
 
 function render() {
   const app = document.getElementById('app');
   if (!app) return;
-
-  if (!game) {
-    renderSetup(app);
-    return;
-  }
-
+  if (!game) { renderSetup(app); return; }
   switch (game.phase) {
     case PHASE.QUESTION:      renderQuestion(app);      break;
     case PHASE.ANSWER_TURN:   renderAnswerTurn(app);    break;
@@ -308,254 +284,227 @@ function render() {
 // ─── Screens ─────────────────────────────────────────────────────────────────
 
 function renderSetup(app) {
-  const n = setupState.numPlayers;
-  const r = setupState.numRounds;
-
+  const n = setup.numPlayers, r = setup.numRounds;
   app.innerHTML = '<div class="screen">'
-    + '<div class="logo-block">'
-    +   '<h1>Bluff & Co</h1>'
-    +   '<p class="subtitle">Le jeu du bluff et de la deduction — qui va tromper qui ?</p>'
+    + '<div class="logo-block"><h1>Bluff & Co</h1>'
+    + '<p class="subtitle">Bluffez, trompez, deduisez.<br>Qui va tromper tout le monde ?</p></div>'
+
+    + '<div class="slider-wrap">'
+    +   '<div class="slider-row"><span>Joueurs</span><span class="slider-pill" id="pVal">' + n + '</span></div>'
+    +   '<input type="range" min="2" max="20" value="' + n + '" oninput="onPlayersChange(this.value)">'
     + '</div>'
 
-    + '<div class="slider-container">'
-    +   '<div class="slider-label">'
-    +     '<span>Nombre de joueurs</span>'
-    +     '<span class="slider-value" id="playersVal">' + n + '</span>'
-    +   '</div>'
-    +   '<input type="range" min="2" max="20" value="' + n + '" '
-    +     'oninput="onPlayersChange(this.value)">'
+    + '<div class="slider-wrap">'
+    +   '<div class="slider-row"><span>Manches</span><span class="slider-pill" id="rVal">' + r + '</span></div>'
+    +   '<input type="range" min="1" max="10" value="' + r + '" oninput="onRoundsChange(this.value)">'
     + '</div>'
 
-    + '<div class="slider-container">'
-    +   '<div class="slider-label">'
-    +     '<span>Nombre de manches</span>'
-    +     '<span class="slider-value" id="roundsVal">' + r + '</span>'
-    +   '</div>'
-    +   '<input type="range" min="1" max="10" value="' + r + '" '
-    +     'oninput="onRoundsChange(this.value)">'
-    + '</div>'
-
-    + '<p class="section-title">Prenoms des joueurs</p>'
-    + '<div class="player-names" id="playerNames">'
-    +   buildNameInputs(n)
-    + '</div>'
+    + '<p class="label-xs" style="margin-bottom:12px">Prenoms</p>'
+    + '<div class="player-list" id="pList">' + nameInputsHTML(n) + '</div>'
 
     + '<div class="spacer"></div>'
     + '<button class="btn btn-primary" onclick="startGame()">Lancer la partie</button>'
     + '</div>';
 
   for (let i = 0; i < n; i++) {
-    const el = document.getElementById('pname-' + i);
-    if (el && setupState.names[i]) el.value = setupState.names[i];
+    const el = document.getElementById('pn' + i);
+    if (el && setup.names[i]) el.value = setup.names[i];
   }
 }
 
-// ── Question screen ──
+// ── Question ──
 
 function renderQuestion(app) {
   app.innerHTML = '<div class="screen">'
-    + roundBadgeHTML(game.currentRound, game.totalRounds)
+    + roundChip()
     + '<div class="spacer"></div>'
-    + '<p class="question-label">Question du tour</p>'
+    + '<p class="question-eyebrow">Question du tour</p>'
     + '<p class="question-text">' + esc(game.question) + '</p>'
     + '<div class="spacer"></div>'
-    + '<p class="hint-text">Chaque joueur va repondre en secret.<br>Bluffez, trompez, survivez !</p>'
-    + '<button class="btn btn-primary" onclick="startAnswers()">Commencer les reponses</button>'
+    + '<p class="subtitle" style="text-align:center;margin-bottom:20px">'
+    +   'Chaque joueur repond en secret. Qui va bluffer le mieux ?'
+    + '</p>'
+    + '<button class="btn btn-primary" style="margin-bottom:10px" onclick="startAnswers()">Commencer les reponses</button>'
+    + '<button class="btn btn-ghost" onclick="skipQuestion()">Changer de question</button>'
     + '</div>';
 }
 
-// ── Answer turn screen ──
+// ── Answer turn ──
 
 function renderAnswerTurn(app) {
-  const { currentAnswerPlayerIdx, players, question, currentRound, totalRounds } = game;
-  const player = players[currentAnswerPlayerIdx];
-
+  const { currentAnswerPlayer, players, question, currentRound, totalRounds } = game;
+  const p = players[currentAnswerPlayer];
   app.innerHTML = '<div class="screen">'
-    + roundBadgeHTML(currentRound, totalRounds)
-    + progressDotsHTML(currentAnswerPlayerIdx, players.length)
+    + roundChip()
+    + progressBar(currentAnswerPlayer, players.length)
 
-    + '<div class="player-turn-card">'
-    +   '<div class="player-turn-name">' + esc(player.name) + '</div>'
-    +   '<div class="player-turn-subtitle">Tourne l\'ecran vers toi !</div>'
+    + '<div class="turn-banner">'
+    +   '<div class="turn-name">' + esc(p.name) + '</div>'
+    +   '<div class="turn-sub">Tourne l\'ecran vers toi !</div>'
     + '</div>'
 
-    + '<p class="answer-question-hint">"' + esc(question) + '"</p>'
-
-    + '<textarea id="answerInput" placeholder="Ta reponse secrete..." '
+    + '<p class="answer-hint">"' + esc(question) + '"</p>'
+    + '<textarea id="ansInput" placeholder="Ta reponse secrete..." '
     +   'autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false"></textarea>'
 
     + '<div class="spacer"></div>'
-
-    + '<button class="btn btn-primary" onclick="submitAnswer()" style="margin-top:16px">'
-    +   'Valider ma reponse'
-    + '</button>'
+    + '<button class="btn btn-primary" style="margin-top:16px" onclick="submitAnswer()">Valider ma reponse</button>'
     + '</div>';
 
   setTimeout(function() {
-    const el = document.getElementById('answerInput');
+    const el = document.getElementById('ansInput');
     if (el) el.focus();
-  }, 120);
+  }, 150);
 }
 
-// ── Vote collect screen ──
+// ── Vote collect ──
 
 function renderVoteCollect(app) {
   const { currentAnswerIdx, currentVoterPos, players, answers, currentRound, totalRounds } = game;
-  const answer   = answers[currentAnswerIdx];
-  const eligible = getEligibleVoters(currentAnswerIdx);
-  const voterIdx = eligible[currentVoterPos];
-  const voter    = players[voterIdx];
+  const answer  = answers[currentAnswerIdx];
+  const voters  = eligibleVoters(currentAnswerIdx);
+  const voter   = players[voters[currentVoterPos]];
 
-  // Build vote buttons (exclude nobody — all players shown, author can be guessed)
-  const voteButtons = players.map(function(p, i) {
-    return '<button class="vote-btn" id="vote-btn-' + i + '" onclick="selectVote(' + i + ')">'
-      + esc(p.name)
-      + '</button>';
+  const btns = players.map(function(p, i) {
+    return '<button class="vote-btn" id="vb' + i + '" onclick="selectVote(' + i + ')">'
+      + esc(p.name) + '</button>';
   }).join('');
 
   app.innerHTML = '<div class="screen">'
-    + roundBadgeHTML(currentRound, totalRounds)
-    + progressDotsHTML(currentAnswerIdx, answers.length)
+    + roundChip()
+    + progressBar(currentAnswerIdx, answers.length)
 
     + '<div class="answer-card">'
-    +   '<p class="answer-counter">Reponse ' + (currentAnswerIdx + 1) + ' / ' + answers.length + '</p>'
-    +   '<p class="answer-text">' + esc(answer.text) + '</p>'
+    +   '<p class="answer-eyebrow">Reponse ' + (currentAnswerIdx+1) + ' / ' + answers.length + '</p>'
+    +   '<p class="answer-body">' + esc(answer.text) + '</p>'
     + '</div>'
 
-    + '<div class="player-turn-card" style="margin-bottom:16px">'
-    +   '<div class="player-turn-name">' + esc(voter.name) + '</div>'
-    +   '<div class="player-turn-subtitle">Qui a ecrit cette reponse ?</div>'
+    + '<div class="turn-banner" style="margin-bottom:16px">'
+    +   '<div class="turn-name">' + esc(voter.name) + '</div>'
+    +   '<div class="turn-sub">Qui a ecrit ca ?</div>'
     + '</div>'
 
-    + '<div class="vote-grid">' + voteButtons + '</div>'
-
+    + '<div class="vote-grid">' + btns + '</div>'
     + '<div class="spacer"></div>'
-
-    + '<button class="btn btn-primary" id="confirmVoteBtn" onclick="confirmVote()" disabled>'
+    + '<button class="btn btn-primary" id="confirmBtn" onclick="confirmVote()" disabled>'
     +   'Confirmer mon vote'
     + '</button>'
     + '</div>';
 }
 
-// ── Vote reveal screen ──
+// ── Vote reveal ──
 
 function renderVoteReveal(app) {
-  const { currentAnswerIdx, answers, players, votes, currentRound, totalRounds } = game;
-  const answer     = answers[currentAnswerIdx];
-  const authorIdx  = answer.playerIndex;
-  const author     = players[authorIdx];
-  const eligible   = getEligibleVoters(currentAnswerIdx);
-  const answerVotes = votes[currentAnswerIdx] || {};
+  const { currentAnswerIdx, answers, players, votes } = game;
+  const answer    = answers[currentAnswerIdx];
+  const authorIdx = answer.playerIndex;
+  const author    = players[authorIdx];
+  const voters    = eligibleVoters(currentAnswerIdx);
+  const aVotes    = votes[currentAnswerIdx] || {};
 
-  const results = eligible.map(function(voterIdx) {
-    const guessedIdx = answerVotes[voterIdx];
-    const correct    = (guessedIdx === authorIdx);
-    return { voterIdx: voterIdx, guessedIdx: guessedIdx, correct: correct };
+  const results = voters.map(function(vi) {
+    const guessed = aVotes[vi];
+    return { vi, guessed, hit: guessed === authorIdx };
   });
 
-  const fooled      = results.filter(function(r) { return !r.correct; }).length;
-  const authorPts   = fooled * 2;
+  const fooled    = results.filter(function(r) { return !r.hit; }).length;
+  const authorPts = fooled * 2;
+  const isLast    = currentAnswerIdx >= answers.length - 1;
 
-  const resultRows  = results.map(function(r) {
-    const label  = r.correct ? 'Bonne reponse !' : 'Pensait a ' + esc(players[r.guessedIdx].name);
-    const points = r.correct ? '+1 pt' : '0 pt';
-    return '<div class="reveal-row ' + (r.correct ? 'correct' : 'wrong') + '">'
-      + '<span>' + esc(players[r.voterIdx].name) + '</span>'
-      + '<span style="display:flex;align-items:center;gap:8px">'
-      +   '<span style="opacity:.7;font-size:.8rem">' + label + '</span>'
-      +   '<span class="points">' + points + '</span>'
-      + '</span>'
+  const rows = results.map(function(r) {
+    const who   = players[r.guessed] ? esc(players[r.guessed].name) : '?';
+    const label = r.hit ? 'Bonne reponse' : 'A cru que c\'etait ' + who;
+    const pts   = r.hit ? '+1' : '0';
+    return '<div class="result-row ' + (r.hit ? 'hit' : 'miss') + '">'
+      + '<span>' + esc(players[r.vi].name) + '</span>'
+      + '<span class="sub">' + label + '</span>'
+      + '<span class="result-pts">' + pts + ' pt' + (r.hit ? '' : '') + '</span>'
       + '</div>';
   }).join('');
 
-  const isLast     = (currentAnswerIdx >= answers.length - 1);
-  const nextAction = isLast
-    ? 'onclick="endVoting()">Voir les scores'
-    : 'onclick="nextAnswer()">Reponse suivante';
+  const authorLine = authorPts > 0
+    ? fooled + ' personne(s) trompee(s) &rarr; +' + authorPts + ' pts'
+    : 'Tout le monde a devine &mdash; 0 pt';
 
   app.innerHTML = '<div class="screen">'
-    + roundBadgeHTML(currentRound, totalRounds)
-    + progressDotsHTML(currentAnswerIdx, answers.length)
+    + roundChip()
+    + progressBar(currentAnswerIdx, answers.length)
 
     + '<div class="answer-card">'
-    +   '<p class="answer-counter">Reponse ' + (currentAnswerIdx + 1) + ' / ' + answers.length + '</p>'
-    +   '<p class="answer-text">' + esc(answer.text) + '</p>'
+    +   '<p class="answer-eyebrow">Reponse ' + (currentAnswerIdx+1) + ' / ' + answers.length + '</p>'
+    +   '<p class="answer-body">' + esc(answer.text) + '</p>'
     + '</div>'
 
-    + '<div class="reveal-author-card">'
-    +   '<p class="reveal-label">Ecrit par</p>'
-    +   '<p class="reveal-author-name">' + esc(author.name) + '</p>'
-    +   (authorPts > 0
-          ? '<p class="reveal-author-points">' + fooled + ' personne(s) trompee(s) → +' + authorPts + ' pts</p>'
-          : '<p class="reveal-author-points">Tout le monde a devine — 0 pt</p>')
+    + '<div class="reveal-card">'
+    +   '<p class="reveal-eyebrow">Ecrit par</p>'
+    +   '<p class="reveal-name">' + esc(author.name) + '</p>'
+    +   '<p class="reveal-author-pts">' + authorLine + '</p>'
     + '</div>'
 
-    + '<div class="reveal-results">' + resultRows + '</div>'
-
+    + '<div class="result-list">' + rows + '</div>'
     + '<div class="spacer"></div>'
-    + '<button class="btn btn-primary" ' + nextAction + '</button>'
+    + '<button class="btn btn-primary" onclick="' + (isLast ? 'endVoting()' : 'nextAnswer()') + '">'
+    +   (isLast ? 'Voir les scores' : 'Reponse suivante')
+    + '</button>'
     + '</div>';
 }
 
-// ── Round results screen ──
+// ── Round results ──
 
 function renderRoundResults(app) {
   const { currentRound, totalRounds, roundDeltas } = game;
-  const sorted     = sortedPlayers();
-  const isLastRound = (currentRound >= totalRounds);
+  const list    = sorted();
+  const isLast  = currentRound >= totalRounds;
 
-  const items = sorted.map(function(p, rank) {
-    const delta = roundDeltas[p.idx] || 0;
-    return '<div class="leaderboard-item rank-' + (rank + 1) + '">'
-      + '<div class="leaderboard-rank">' + rankLabel(rank) + '</div>'
-      + '<div class="leaderboard-name">' + esc(p.name) + '</div>'
-      + (delta > 0 ? '<div class="leaderboard-delta">+' + delta + '</div>' : '')
-      + '<div class="leaderboard-score">' + p.score + ' pts</div>'
+  const rows = list.map(function(p, rank) {
+    const d = roundDeltas[p.idx] || 0;
+    return '<div class="board-row ' + rankClass(rank) + '">'
+      + '<div class="board-rank">' + rankNum(rank) + '</div>'
+      + '<div class="board-name">' + esc(p.name) + '</div>'
+      + (d > 0 ? '<div class="board-delta">+' + d + '</div>' : '')
+      + '<div class="board-score">' + p.score + ' pts</div>'
       + '</div>';
   }).join('');
 
-  const nextAction = isLastRound
-    ? 'onclick="showFinalResults()">Voir le resultat final'
-    : 'onclick="nextRound()">Manche suivante';
-
   app.innerHTML = '<div class="screen">'
-    + '<div style="margin-bottom:8px">'
-    +   '<span class="round-badge">Manche ' + currentRound + ' / ' + totalRounds + '</span>'
+    + '<div style="margin-bottom:24px">'
+    +   '<div class="round-chip"><div class="round-chip-dot"></div>Manche ' + currentRound + ' / ' + totalRounds + '</div>'
     + '</div>'
-    + '<h2 style="margin-bottom:22px">Scores</h2>'
-    + '<div class="leaderboard">' + items + '</div>'
+    + '<h2 style="margin-bottom:18px">Scores</h2>'
+    + '<div class="board">' + rows + '</div>'
     + '<div class="spacer"></div>'
-    + '<button class="btn btn-primary" ' + nextAction + '</button>'
+    + '<button class="btn btn-primary" onclick="' + (isLast ? 'showFinal()' : 'nextRound()') + '">'
+    +   (isLast ? 'Voir le resultat final' : 'Manche suivante')
+    + '</button>'
     + '</div>';
 }
 
-// ── Final results screen ──
+// ── Final results ──
 
 function renderFinalResults(app) {
-  const sorted = sortedPlayers();
-  const winner = sorted[0];
+  const list   = sorted();
+  const winner = list[0];
 
-  const items = sorted.map(function(p, rank) {
-    return '<div class="leaderboard-item rank-' + (rank + 1) + '">'
-      + '<div class="leaderboard-rank">' + rankLabel(rank) + '</div>'
-      + '<div class="leaderboard-name">' + esc(p.name) + '</div>'
-      + '<div class="leaderboard-score">' + p.score + ' pts</div>'
+  const rows = list.map(function(p, rank) {
+    return '<div class="board-row ' + rankClass(rank) + '">'
+      + '<div class="board-rank">' + rankNum(rank) + '</div>'
+      + '<div class="board-name">' + esc(p.name) + '</div>'
+      + '<div class="board-score">' + p.score + ' pts</div>'
       + '</div>';
   }).join('');
 
   app.innerHTML = '<div class="screen">'
-    + '<div class="final-winner-card">'
-    +   '<p class="winner-label">Gagnant</p>'
+    + '<div class="winner-card">'
+    +   '<p class="winner-eyebrow">Gagnant</p>'
     +   '<p class="winner-name">' + esc(winner.name) + '</p>'
-    +   '<p class="winner-score">' + winner.score + ' points</p>'
+    +   '<p class="winner-pts">' + winner.score + ' points</p>'
     + '</div>'
-    + '<h2 style="margin-bottom:18px">Classement final</h2>'
-    + '<div class="leaderboard">' + items + '</div>'
+    + '<h2 style="margin-bottom:16px">Classement final</h2>'
+    + '<div class="board">' + rows + '</div>'
     + '<div class="spacer"></div>'
-    + '<button class="btn btn-secondary" onclick="resetGame()">Nouvelle partie</button>'
+    + '<button class="btn btn-ghost" onclick="resetGame()">Nouvelle partie</button>'
     + '</div>';
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
-
 render();
